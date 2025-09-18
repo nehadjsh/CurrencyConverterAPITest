@@ -1,0 +1,202 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Currency Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        .flag {
+            width: 24px;
+            height: 16px;
+            margin-right: 6px;
+            object-fit: cover;
+            border: 1px solid #ccc;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="p-3">
+
+    <div class="container">
+        <h1>Currency Converter</h1>
+
+        <div class="row mb-3">
+            <div class="col-md-4">
+                <label for="baseCurrency" class="form-label">Base Currency</label>
+                <select id="baseCurrency" class="form-select"></select>
+            </div>
+            <div class="col-md-4">
+                <label for="amount" class="form-label">Amount</label>
+                <input type="number" id="amount" class="form-control" value="100" min="0.01" step="0.01">
+            </div>
+            <div class="col-md-4 d-flex flex-column align-items-start">
+                <label for="targetCurrency" class="form-label w-100">Select Target Currency</label>
+                <select id="targetCurrency" class="form-select w-100 mb-2"></select>
+                <button id="addTargetBtn" class="btn btn-primary w-100 mb-2">Add Target Currency</button>
+                <div class="d-flex align-items-center gap-2">
+                    <button id="refreshBtn" class="btn btn-secondary btn-sm">Refresh Now</button>
+                    <span id="lastUpdate" class="text-muted">Last updated: --</span>
+                </div>
+            </div>
+        </div>
+
+        <h3 style="text-align:center;">Target Currencies</h3>
+        <ul id="targetList" class="list-group mb-3"></ul>
+    </div>
+
+    <script>
+        const baseSelect = document.getElementById('baseCurrency');
+        const targetSelect = document.getElementById('targetCurrency');
+        const amountInput = document.getElementById('amount');
+        const targetList = document.getElementById('targetList');
+        const lastUpdate = document.getElementById('lastUpdate');
+        const refreshBtn = document.getElementById('refreshBtn');
+        let currencies = {};
+        const charts = {};
+
+        function getFlagUrl(code) {
+            const map = { EUR: "eu", USD: "us", GBP: "gb", JPY: "jp", CAD: "ca", AUD: "au", CHF: "ch", CNY: "cn", SAR: "sa", AED: "ae", EGP: "eg" };
+            const country = map[code] || code.slice(0, 2).toLowerCase();
+            return `https://flagcdn.com/w20/${country}.png`;
+        }
+
+        async function fetchCurrencies() {
+            try {
+                const res = await fetch('/api/currency/currencies');
+                currencies = await res.json();
+
+                baseSelect.innerHTML = '';
+                targetSelect.innerHTML = '';
+
+                for (const code in currencies) {
+                    const option1 = document.createElement('option');
+                    option1.value = code;
+                    option1.textContent = `${code} - ${currencies[code]}`;
+                    baseSelect.appendChild(option1);
+
+                    const option2 = document.createElement('option');
+                    option2.value = code;
+                    option2.textContent = `${code} - ${currencies[code]}`;
+                    targetSelect.appendChild(option2);
+                }
+            } catch (err) {
+                console.error('Error fetching currencies', err);
+            }
+        }
+
+        function addTargetCurrency(code) {
+            code = code.toUpperCase();
+
+            // Check for duplicates
+            if (!currencies[code]) return;
+            if ([...targetList.children].some(li => li.dataset.code === code)) {
+                alert("This currency is already added!");
+                return;
+            }
+
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex flex-column';
+            li.dataset.code = code;
+            li.innerHTML = `
+          <div class="d-flex justify-content-between align-items-center w-100">
+            <span class="fw-bold">
+              <img class="flag" src="${getFlagUrl(code)}"/> ${code} - ${currencies[code]}: ...
+            </span>
+            <button class="btn btn-sm btn-danger">Remove</button>
+          </div>
+          <canvas class="mt-2" height="50"></canvas>
+        `;
+
+            // Delete button
+            li.querySelector('.btn-danger').addEventListener('click', () => {
+                if (charts[code]) { charts[code].destroy(); delete charts[code]; }
+                li.remove();
+                updateResults();
+            });
+
+            targetList.appendChild(li);
+            updateResults();
+        }
+
+        document.getElementById('addTargetBtn').addEventListener('click', () => {
+            const code = targetSelect.value;
+            if (code) addTargetCurrency(code);
+        });
+
+        async function updateResults() {
+            const base = baseSelect.value;
+            const amount = parseFloat(amountInput.value);
+            const targets = [...targetList.children].map(li => li.dataset.code).join(',');
+            if (!base || !amount || !targets) return;
+
+            try {
+                const res = await fetch(`/api/currency/convert-list?base=${base}&amount=${amount}&targets=${targets}`);
+                const data = await res.json();
+
+                for (const li of targetList.children) {
+                    const code = li.dataset.code;
+                    const canvas = li.querySelector('canvas');
+                    const span = li.querySelector('span');
+                    const value = data.rates[code] || 0;
+
+                    span.innerHTML = `<img class="flag" src="${getFlagUrl(code)}"/> ${code} - ${currencies[code]}: ${value.toFixed(2)}`;
+
+                    if (charts[code]) {
+                        charts[code].data.labels = [base, code];
+                        charts[code].data.datasets[0].data = [amount, value];
+                        charts[code].update();
+                    } else {
+                        charts[code] = new Chart(canvas, {
+                            type: 'bar',
+                            data: {
+                                labels: [base, code],
+                                datasets: [{
+                                    label: 'Amount',
+                                    data: [amount, value],
+                                    backgroundColor: ['#0d6efd', '#198754']
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                plugins: { legend: { display: false } },
+                                scales: { y: { beginAtZero: true } }
+                            }
+                        });
+                    }
+                }
+
+                const now = new Date();
+                lastUpdate.textContent = `Last updated: ${now.toLocaleTimeString()}`;
+
+            } catch (err) {
+                console.error('Error fetching rates:', err);
+            }
+        }
+
+        baseSelect.addEventListener('change', updateResults);
+        amountInput.addEventListener('input', updateResults);
+        refreshBtn.addEventListener('click', updateResults);
+        new Sortable(targetList, { animation: 150, onEnd: updateResults });
+
+        window.addEventListener('load', async () => {
+            await fetchCurrencies();
+            addTargetCurrency('EUR');
+            addTargetCurrency('USD');
+
+            // Auto update every minute
+            setInterval(updateResults, 60000);
+        });
+    </script>
+
+</body>
+</html>
