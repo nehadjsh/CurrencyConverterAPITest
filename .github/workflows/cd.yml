@@ -1,0 +1,40 @@
+name: CD - Deploy to Kubernetes
+
+on:
+  workflow_run:
+    workflows: ["CI - Build & Push to ECR"]
+    types:
+      - completed
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Update kubeconfig
+        run: |
+          aws eks --region ${{ secrets.AWS_REGION }} update-kubeconfig --name ${{ secrets.CLUSTER_NAME }}
+
+      - name: Deploy API
+        run: |
+          kubectl set image deployment/currency-converter-api \
+            currency-converter=${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+      - name: Apply Services
+        run: |
+          kubectl apply -f k8s/service-api.yml
+          kubectl apply -f k8s/headless-service.yml
