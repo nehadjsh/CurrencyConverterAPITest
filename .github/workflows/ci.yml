@@ -38,4 +38,3 @@ jobs:
       - name: Push to ECR
         run: |
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-          
